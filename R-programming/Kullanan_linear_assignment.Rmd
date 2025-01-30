@@ -1,0 +1,492 @@
+---
+title: "Practice session for linear regression"
+author: "kullanan k."
+date: "2024-12-01"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Practice instruction for linear regression analysis
+
+## Library
+
+```{r}
+library(tidyverse)
+library(gt)
+library(gtsummary)
+library(IRdisplay)
+library(broom)
+```
+
+## import data
+
+Read file ERI data RDS file (practice)
+
+```{r}
+ERIdata <- ERIdata <- readRDS("~/Documents/M.S. Coursework Slide/Statistic/term 2/assignment/ERIdata.rds")
+
+str(ERIdata)
+```
+
+## Questions
+
+1.  **All variables are coded as character, please convert them into appropriate type of variables more suitable for data analysis.**
+
+    > **Ans:** Change some variables from character to factor with levels such as work_hour, work_day, self_income, self_adequate, education and some variables change to numeric example age, effort_score, reward_score, overcommit_score, ghq_score
+
+```{r}
+data <- ERIdata %>% 
+  mutate(age = as.numeric(age),
+         work_hour = factor(work_hour,
+                            levels = c("<=8",">8")),
+         work_day = factor(work_day,
+                           levels = c("Up to 5","More than 5")),
+         self_income =factor(self_income,
+                             levels = c("<15k","15-30k",">30k")),
+         self_adequate = factor(self_adequate,
+                                levels = c("have debt","barely adequate","adequate","have saving")),
+         education = factor(education,
+                            levels = c("Bachelor","Master")),
+         effort_score = as.numeric(effort_score),
+         reward_score = as.numeric(reward_score),
+         overcommit_score = as.numeric(overcommit_score),
+         ghq_score = as.numeric(ghq_score))
+
+str(data)
+```
+
+2.  **As described in the previous part, create new variables that are the modification of effort-reward and overcommitment scales**
+
+    > **Ans:** create
+    >
+    > -   ERI_ratio is ratio of effectiveness and reward
+    >
+    > -   ERI_group1 group by interpretation of ERI ratio that cut off \>= 1 is balance
+    >
+    > -   ERI_group2 group by quatile of ERI ratio
+
+```{r}
+data <- data %>%
+  mutate(ERI_ratio = (effort_score / reward_score) * (11 / 6))
+# Calculate quartiles of ERI_ratio
+quartiles <- quantile(data$ERI_ratio, probs = c(0.25, 0.5, 0.75),na.rm = T)
+data <- data %>% 
+  mutate(ERI_group1 = factor(ifelse(ERI_ratio >= 1, "balance", "imbalance")),
+         ERI_group2 = cut(ERI_ratio, 
+                          breaks = c(-Inf, quartiles[1], quartiles[2], quartiles[3], Inf),
+                          include.lowest = TRUE))
+
+head(data)
+```
+
+3.  **Create a table that describe participant's characteristics and scales of ERI questionnaire and Thai GHQ.**
+
+    > **ANS :** create Table 1 ...
+
+```{r}
+data %>%
+  select(-c(id,job)) %>%
+  tbl_summary(
+    label = list(age = 'Age(years)', 
+                 work_hour = 'Number of working hours per day',
+                 work_day = 'Number of working days per week', 
+                 self_income = 'Income per month', 
+                 self_adequate = 'Adequacy of income', 
+                 education = 'Educational level',
+                 effort_score = 'Effort score',
+                 reward_score = 'Reward score',
+                 ERI_ratio = 'ERI Ratio',
+                 ERI_group1 = 'ERI Group by ERI Ratio cutting point >=1',
+                 ERI_group2 = 'ERI Group by median of ERI ratio',
+                 overcommit_score = 'Overcommitment scale',
+                 ghq_score = 'General Health Score'),
+    type = list(c(age,effort_score,reward_score,overcommit_score,ghq_score,ERI_ratio)~ 'continuous2'),
+    statistic = list(all_continuous2() ~ c('{mean} ({sd}) [{min}-{max}]',
+                                           '{median} ({IQR}) [{p25}-{p75}]'),
+                     all_categorical() ~ '{n}/{N} ({p}%)'),
+    sort = all_categorical() ~ 'frequency',
+    missing = 'ifany',
+    missing_text = "Missing") %>% as_gt() 
+
+
+```
+
+```{r}
+# or we can use table 1
+table1::table1(~ age + work_hour + work_day + self_income + self_adequate + education +effort_score+reward_score+ ERI_ratio + ERI_group1 + ERI_group2 +overcommit_score + ghq_score , data=data) %>%
+  gsub("<tr>", "<tr style='color: black;'>", .) 
+
+```
+
+4.  **Check if ghq_score appropriately followed normal distribution. If not, you can try some data transformation such as squared root [x\^(1/2)] and cubed root [x\^(1/3)]. See if transformed data satisfy the condition of normal distribution.**
+
+    **ANS :** to check normal distribution can use
+    >
+    > -   visualization [ex]{.underline} histogram plot, density plot, violin plot, qqplot
+    >
+    > -   statistical [ex]{.underline} Shapiro--Wilk , Kolmogorov-Smirnov Test
+    >
+    > All chart are **"Right skewed distribution"**
+
+```{r}
+hist(data$ghq_score)
+qqnorm(data$ghq_score);qqline(data$ghq_score,col = "red")
+```
+
+```{r}
+# Data transformation 
+data$ghq_sqrt <- sqrt(data$ghq_score)
+data$ghq_cuberoot <- (data$ghq_score)^(1/3)
+```
+
+```{r}
+hist(data$ghq_sqrt)
+shapiro.test(data$ghq_sqrt)
+qqnorm(data$ghq_sqrt);qqline(data$ghq_sqrt,col = "red")
+```
+
+```{r}
+hist(data$ghq_cuberoot)
+shapiro.test(data$ghq_cuberoot)
+qqnorm(data$ghq_cuberoot);qqline(data$ghq_cuberoot,col = "red")
+```
+
+5.  **Create a univariable linear regression table that shows the association between ghq_score and other variables**
+
+    > **ANS :** visualize data in each variable with ghq_score and add in to model function for check association between ghq_score and other variables
+
+```{r}
+# create model function
+model <- function(x){
+  var_name <- deparse(substitute(x))
+  var_name <- gsub("data\\$", "", var_name)
+  lm(ghq_score ~ x, data) %>%
+    broom::tidy(conf.int = TRUE) %>%  # Add conf.int = TRUE
+    mutate(var = var_name, .before = "term")
+}
+```
+
+```{r}
+# list of model
+results_list <- list(model(data$age),
+model(data$work_hour),
+model(data$work_day),
+model(data$self_income), 
+model(data$self_adequate), 
+model(data$education),
+model(data$effort_score), 
+model(data$reward_score), 
+model(data$ERI_ratio),
+model(data$ERI_group1),
+model(data$ERI_group2),
+model(data$overcommit_score))
+```
+
+```{r}
+# results of each model
+univariable_table <- bind_rows(results_list) %>% 
+  filter(term != "(Intercept)") %>%
+  mutate(p.value = round(p.value,3))
+print(univariable_table)
+```
+
+```{r}
+## Or we can use tbl_uvregression 
+data %>% 
+  select(-c(id,job)) %>% 
+  tbl_uvregression(
+    y=ghq_score,
+    formula = "{y} ~ {x}",
+    method = "lm" )
+```
+
+6.  **Propose the objective and strategy that you will use to perform the multivariable analysis of association between ghq_score and other variables.**
+
+    > **Ans :** Objective To identify the independent predictors of ghq_score among the selected variables
+    >
+    > Strategy: plot ดูแนวโน้มความสัมพันธ์ของ ghq_score กับ selected variables เช่น ERI_ratio, overcommit_score
+    >
+    > สร้าง model ที่ประกอบด้วยตัวแปรต่างๆ
+    >
+    > -   effort_score, reward_score ใช้ ERI_ratio แทน เพราะหากใช้ทุก variables จะทำให้ตัวแปร confound กันเอง
+    >
+    > -   ส่วน overcommit_score เป็น modifier จึงอาจตรวจสอบ interaction term ร่วมด้วย
+    >
+    > และทดสอบความสำคัญทางสถิติ ซึ่งทดสอบได้ 2 วิธี
+    >
+    > 1.  Partial F-test ใช้ anova() เลือกตาม p-value ของ F distribution
+    > 2.  ใช้ตัววัดทางสถิติ เช่น AIC, BIC ที่ใช้ในการประเมินความพอดีของ model กับข้อมูล โดยพิจารณาจากความแม่นยำและความซับซ้อนของ model ซึ่งตัววัดจะสามารถเลือก model ที่ดีที่สุดจาก model ที่มี AIC ต่ำที่สุด สะดวกเมื่อต้องใช้เปรียบเทียบหลายๆแบบจำลอง
+    >
+    > ในที่นี้จะใช้ค่า AIC ในการพิจารณาเลือก model และในข้อมูลควรจำนวนเท่ากันในแต่ละตัวแปร
+
+```{r}
+ggplot(data, aes(x = ERI_ratio, y = ghq_score, col = overcommit_score)) +
+  geom_point() +
+  geom_smooth(method = "lm",se = F) + 
+  labs(title = "Interaction between ERI Ratio and Overcommitment",
+       x = "ERI Ratio",
+       y = "GHQ Score",
+       color = "Overcommitment")
+```
+
+7.  **Create a table of multivariable linear regression model(s) following your proposed objective and strategy.**
+
+    > **ANS :** create base model and add and/or remove variable
+
+```{r}
+#setting base model
+lm(ghq_score ~ ERI_ratio , data = data) %>% summary()
+```
+
+```{r}
+# remove NA in data
+data2 <- na.omit(data)
+
+# Add variables one by one
+base_model <- lm(ghq_score ~ ERI_ratio , data = data2)
+model_1 <- lm(ghq_score ~ ERI_ratio + age, data = data2)
+model_2 <- lm(ghq_score ~ ERI_ratio + age + work_hour, data = data2)
+model_3 <- lm(ghq_score ~ ERI_ratio + age + work_hour + work_day, data = data2)
+model_4 <- lm(ghq_score ~ ERI_ratio + age + work_hour + work_day + self_income, data = data2)
+model_5 <- lm(ghq_score ~ ERI_ratio + age + work_hour + work_day + self_income+ self_adequate , data = data2)
+model_6 <- lm(ghq_score ~ ERI_ratio + age + work_hour + work_day + self_income+ self_adequate+education , data = data2)
+model_7 <- lm(ghq_score ~ ERI_ratio + age + work_hour + work_day + self_income+ self_adequate+education + overcommit_score , data = data2)
+
+# test interaction and remove variables
+model_8 <- lm(ghq_score ~ ERI_ratio * overcommit_score + age + work_hour + work_day + self_income + self_adequate + education, data = data2)
+model_9 <- lm(ghq_score ~ ERI_ratio * overcommit_score + age + work_hour + work_day + self_income + self_adequate , data = data2)
+model_10 <- lm(ghq_score ~ ERI_ratio * overcommit_score + age + work_hour + work_day + self_income , data = data2)
+model_11 <- lm(ghq_score ~ ERI_ratio * overcommit_score + age + work_hour , data = data2)
+model_12 <- lm(ghq_score ~ ERI_ratio * overcommit_score + age , data = data2)
+model_13 <- lm(ghq_score ~ ERI_ratio * overcommit_score , data = data2)
+
+# no interaction but random variables
+model_14 <- lm(ghq_score ~ ERI_ratio + overcommit_score , data = data2)
+model_15 <- lm(ghq_score ~ ERI_ratio + overcommit_score + age , data = data2)
+model_16 <- lm(ghq_score ~ ERI_ratio + overcommit_score + self_adequate , data = data2)
+
+# ... add other model ...
+
+```
+
+```{r}
+AIC(base_model,
+    model_1, model_2, model_3, model_4,model_5,model_6,model_7,
+    model_8,model_9,model_10,model_11,model_12,model_13,
+    model_14,model_15,model_16) %>% arrange(AIC)
+```
+
+```{r}
+summary(model_12)
+```
+
+> ใช้ model_12 เป็น final model เพราะ มี ค่า AIC น้อย ใช้ตัวแปรจำนวนน้อย และ สามารถใช้ทำนายได้ 28% แต่หากไม่คิด interaction จะใช้ model_15 แทน
+
+8.  **Shows the methods and results of the regression diagnosis and generalization of your final model.**
+
+    > ANS: **Model regression diagnosis**
+    >
+    > function augment( ) จาก package broom ใช้ return ค่าได้หลายตัว
+    >
+    > .fitted = ค่า pedict จาก model = ค่าที่ model ทำนาย
+    >
+    > .resid = ค่า residual = ความแตกต่างของค่าที่ทำนายกับค่าจริง
+    >
+    > .std.resid = ค่า standard residual
+
+```{r}
+augment(model_12) -> aug_model
+aug_model %>% head()
+```
+
+```{r}
+aug_model %>% filter(.std.resid > 3.3)
+aug_model %>% filter(.std.resid > 2.6)
+aug_model %>% filter(.std.resid > 1.96)
+
+#propotion
+aug_model %>%
+  mutate(stdresid_3.3 = ifelse(abs(.std.resid) > 3.3, 1, 0),
+         stdresid_2.6 = ifelse(abs(.std.resid) > 2.6, 1, 0),
+         stdresid_1.96 = ifelse(abs(.std.resid) > 1.96, 1, 0)) %>%
+  count(stdresid_3.3,stdresid_2.6,stdresid_1.96) %>%
+  mutate(proportion = round(n / sum(n),2))
+```
+
+> ดูการกระจายตัวของค่า std.resid\
+> ค่า .std.resid 3 ระดับ กรอง observations ที่มี standardized residuals ซึ่งเป็น outliers ที่อาจต้องตรวจสอบเพิ่มเติมว่า outliers เหล่านี้มีผลต่อ model หรือไม่
+>
+> พบว่า มี data 6% ที่มี .std.resid \>3.3 , 5% ที่มี .std.resid \>2.6 และ 4% ที่มี .std.resid \>1.96
+>
+> พิจารณาค่า .hat และ .cooksd เพิ่มเติม
+>
+> Cook's distance มากกว่า 1 ซึ่งถือเป็น influential points ที่มีผลกระทบอย่างมากต่อ intercept ของแบบจำลอง)
+>
+> พบว่ามี data บางจุดที่มีค่าต่างจากข้อมูลส่วนใหญ่ แต่ **ไม่มี observations ใดๆ ที่มี Cook's distance มากกว่า 1**
+
+```{r}
+aug_model %>% 
+  ggplot(aes(.hat,.std.resid)) + 
+  geom_point() +
+  geom_smooth(method = 'lm')
+
+aug_model %>% 
+  filter(.cooksd > 1)
+```
+
+> **Model Generalization**
+>
+> -   Linear relationship (independent variables and outcome)
+>
+>     ```         
+>     model_12 <- lm(formula = ghq_score ~ ERI_ratio * overcommit_score + age, 
+>         data = data2)
+>     ```
+>
+>     จาก model_12 มีตัวแปรนำมาคำนวณ 3 ตัว ได้แก่ ERI ratio, overcommit score และ age
+>
+>     แสดง linear relationship ระหว่าง independent variables and outcome
+
+```{r}
+data2 %>% 
+  ggplot(aes(age,ghq_score)) + 
+  geom_point() +
+  geom_smooth()
+data2 %>% 
+  ggplot(aes(ERI_ratio,ghq_score)) + 
+  geom_point() +
+  geom_smooth()
+data2 %>% 
+  ggplot(aes(overcommit_score,ghq_score)) + 
+  geom_point()+
+  geom_smooth()
+```
+
+> -   No distribution error (= normal distribution of residual)
+>
+>     model ที่เหมาะสม ควรมีค่า residual กระจายตัวเป็น normal distribution
+>
+>     แต่จากกราฟพบว่า residuals **ไม่ได้กระจายตัวแบบ normal distribution**
+
+```{r}
+hist(aug_model$.resid)
+qqnorm(aug_model$.resid);qqline(aug_model$.resid)
+```
+
+> -   Homoscedastiscity : plot ค่า predict และ std. residual
+>
+>     จากกราฟ scatter plot แสดงความสัมพันธ์ระหว่างค่า .fitted (predict) และ .std.resid (standardized residuals) พบว่า **residuals ไม่คงที่** (ไม่เป็น homoscedasticity)
+
+```{r}
+aug_model %>% ggplot(aes(.fitted,.std.resid)) + geom_point()
+```
+
+> -   No multicolinearity between predictor : VIF
+>
+>     คำนวณ Variance Inflation Factor (VIF) : predictor variables มี strongly correlated การมีค่า VIF สูง บ่งชี้ถึง multicollinearity ซึ่งการทำ linear model จะต้อง No multicollinearity (ค่า VIF ควรต่ำ)
+>
+>     **Multicollinearity:** จากค่า VIF พบว่า **มี multicollinearity ระหว่าง predictor variables**
+
+```{r}
+car:: vif(model_12)
+```
+
+9.  **Describe how well your model fitted with the data. Describe if any further data management or more advanced analytic method can improve the fit.**
+
+    **Ans:**
+
+    ```{r}
+    summary(model_12)
+    ```
+
+> Multiple R-squared: 0.2898 = แบบจำลองนี้ทำนาย GHQ Score ได้ประมาณ 28.98%
+>
+> Adjusted R-squared: 0.2816 ที่ปรับตาม predictor มีค่า 0.2816 ซึ่งใกล้เคียงกับ Multiple R-squared = แบบจำลองไม่ได้มีตัวแปรทำนายมากเกินไป
+>
+> จากตาราง Coefficients จะเห็นว่า ตัวแปร ERI_ratio, overcommit_score, age และ interaction term (ERI_ratio:overcommit_score) มีค่า p-value \< 0.05 = ตัวแปรมีความสัมพันธ์กับ GHQ score อย่างมีนัยสำคัญทางสถิติ
+>
+> [จึงอาจพิจารณาเพิ่มเติม เช่น]{.underline}
+>
+> -   การเพิ่มข้อมูล : การเพิ่มจำนวนตัวอย่าง, เพิ่มตัวแปรอื่นๆ เช่น ปัจจัยสังคม แต่ควรระวัง อาจทำให้เกิดปัญหา overfitting แทน
+>
+> -   การจัดการข้อมูล : จัดการกับ missing values พิจารณาทำ imputation แทนการตัดทิ้ง, การตรวจสอบหรือจัดการ outlier
+>
+> -   ใช้เทคนิคอื่นในการวิเคราะห์ เช่น nonlinear regression แต่หากเทคนิคที่ยิ่งซับซ้อน อาจทำให้ยากต่อการตีความ
+
+### \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\--Additional\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\--
+
+```{r}
+lm(ghq_score ~ age , data = data) -> fit_age
+augment(fit_age) -> aug_fit_age
+# check normal residual
+ggplot(aug_fit_age, aes(age,.resid)) + geom_point() + geom_smooth()
+```
+
+```{r}
+lm(ghq_score ~ ERI_ratio , data = data) -> fit_eri
+summary(fit_eri)
+ggplot(data,aes(ERI_ratio,ghq_score)) + 
+  geom_point() + 
+  geom_smooth()
+```
+
+แปลผล หากสามารถทำ linear model ได้ = เมื่อ ERI ratio เปลี่ยนไป 1 จะทำนาย GHQ score เปลี่ยนไป 7.1567 ส่วนที่ ratio = 0 ค่า GHQ score = -3 ซึ่งในความเป็นจริงเป็นไปไม่ได้
+
+```{r}
+## change ERI_ratio to ERI_group1 (continuouse to group)
+ggplot(data,aes(ERI_group1,ghq_score)) + geom_boxplot()
+lm(ghq_score~ERI_group1,data=data) %>% summary()
+```
+
+จาก boxplot พบว่า GHQ score ทั้งสองกลุ่ม อาจมีความแตกต่างกัน
+
+จาก model พบว่าค่าเฉลี่ยของ GHQ score ในกลุ่ม imbalance แตกต่างจากค่าเฉลี่ยของ GHQ score ในกลุ่ม balance โดยมีค่าต่ำกว่ากลุ่ม balance อยู่ 5.071 - 2.61(1) = 2.461
+
+```{r}
+# polynomial terms
+lm(ghq_score ~ ERI_ratio + I(ERI_ratio^2), data) %>% summary()
+lm(ghq_score ~ ERI_ratio + I(ERI_ratio^2)+ I(ERI_ratio^3), data) %>% summary()
+```
+
+```{r}
+## เทียบ model ด้วย Partial F-test
+anova(lm(ghq_score ~ ERI_ratio , data),
+      lm(ghq_score ~ ERI_ratio + I(ERI_ratio^2), data)) ## I => model sig
+
+anova(lm(ghq_score ~ ERI_ratio + I(ERI_ratio^2), data),
+      lm(ghq_score ~ ERI_ratio + I(ERI_ratio^2)+ I(ERI_ratio^3), data))
+```
+
+แม้การเพิ่ม polynomial terms (I = "as is") อาจทำให้แบบจำลองมีความแม่นยำมากขึ้น\
+แต่อาจทำให้ความซับซ้อนมากเกินไป
+
+```{r}
+lm(ghq_score ~ ERI_ratio , data) -> fit2
+plot(fit2$model$ERI_ratio,resid(fit2))
+```
+
+กราฟแสดงความสัมพันธ์ระหว่างค่า ERI ratio กับค่า residual จากแบบจำลอง linear regression ที่ใช้ทำนาย ghq_score โดยมี ERI ratio เป็นตัวแปรทำนาย พบว่ายิ่งค่า Ratio สูง model จะไม่สามารถใช้ทำนายได้
+
+```{r}
+ggplot(data,aes(self_adequate,ghq_score)) + geom_boxplot()
+lm(ghq_score ~ self_adequate , data) -> fit3
+summary(fit3)
+```
+
+แปลผล: ค่าเฉลี่ยของ GHQ score ในกลุ่ม have saving จะต่ำกว่าค่าเฉลี่ยของ GHQ score ในกลุ่ม have debt อยู่ 5.056-2.399 = 2.657
+
+```{r}
+
+anova(base_model,model_15,model_12)
+  ## ต้องการเปรียบเทียบแบบจำลอง base_model กับ model_1 โดยใช้ ANOVA แต่มีข้อจำกัดว่า จำนวน observations (N) ใน 2 แบบจำลองต้องเท่ากัน
+
+car::Anova(model_12)
+  ## ดูนัยสำคัญของตัวแปรทำนาย (predictors) ในแบบจำลองโดยรวม
+model_12 %>% 
+  tbl_regression() %>% 
+  add_global_p()
+  ## สร้างตารางสรุปผลลัพธ์จาก base_model ใช้ add_global_p() เพื่อเพิ่มค่า p-value สำหรับแบบจำลองโดยรวมในตาราง
+```
+
+### \-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\--END Additional #1\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\--
